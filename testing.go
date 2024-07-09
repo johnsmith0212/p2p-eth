@@ -13,13 +13,14 @@ func Testing() {
 
   bm := NewBlockManager()
 
-  tx := NewTransaction("\x00", 20, []string{
-    "PSH 10",
-  })
+  tx := NewTransaction("\x00", 20, []string{"PUSH"})
   txData := tx.MarshalRlp()
+  fmt.Printf("%q\n", txData)
 
   copyTx := &Transaction{}
   copyTx.UnmarshalRlp(txData)
+  fmt.Println(tx)
+  fmt.Println(copyTx)
 
   tx2 := NewTransaction("\x00", 20, []string{"SET 10 6", "LD 10 10"})
 

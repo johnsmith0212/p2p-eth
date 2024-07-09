@@ -2,7 +2,8 @@ package main
 
 import (
   "math/big"
-  "fmt"
+  _"fmt"
+  "github.com/obscuren/secp256k1-go"
   _"encoding/hex"
   _"crypto/sha256"
   _ "bytes"
@@ -42,10 +43,8 @@ type Transaction struct {
   data        []string
   memory      []int
   lastTx      string
-
-  // To be removed
-  signature   string
-  addr        string
+  v           uint32
+  r, s        []byte
 }
 
 func NewTransaction(to string, value uint64, data []string) *Transaction {
@@ -59,29 +58,80 @@ func NewTransaction(to string, value uint64, data []string) *Transaction {
   for i, val := range data {
     instr, err := CompileInstr(val)
     if err != nil {
-      fmt.Printf("compile error:%d %v\n", i+1, err)
+      //fmt.Printf("compile error:%d %v\n", i+1, err)
     }
 
     tx.data[i] = instr
   }
+
+  tx.SetVRS()
 
 
   return &tx
 }
 
 func (tx *Transaction) Hash() []byte {
-  return Sha256Bin(tx.MarshalRlp())
+  preEnc := []interface{}{
+    tx.nonce,
+    tx.recipient,
+    tx.value,
+    tx.fee,
+    tx.data,
+  }
+
+  return Sha256Bin(Encode(preEnc))
+}
+
+func (tx *Transaction) IsContract() bool {
+  return tx.recipient == ""
+}
+
+func (tx *Transaction) Signature() []byte {
+  hash := tx.Hash()
+  sec  := Sha256Bin([]byte("myprivkey"))
+
+  sig, _ := secp256k1.Sign(hash, sec)
+
+  return sig
+}
+
+func (tx *Transaction) PublicKey() []byte {
+  hash := Sha256Bin(tx.MarshalRlp())
+  sig  := tx.Signature()
+
+  pubkey, _ := secp256k1.RecoverPubkey(hash, sig)
+
+  return pubkey
+}
+
+func (tx *Transaction) Address() []byte {
+  pubk := tx.PublicKey()
+  // 1 is the marker 04
+  key := pubk[1:65]
+
+  return Sha256Bin(key)[12:]
+}
+
+func (tx *Transaction) SetVRS() {
+  // Add 27 so we get either 27 or 28 (for positive and negative)
+  tx.v = uint32(tx.Signature()[64]) + 27
+
+  pubk := tx.PublicKey()[1:65]
+  tx.r = pubk[:32]
+  tx.s = pubk[32:64]
 }
 
 func (tx *Transaction) MarshalRlp() []byte {
   // Prepare the transaction for serialization
   preEnc := []interface{}{
-    tx.lastTx,
-    tx.sender,
+    tx.nonce,
     tx.recipient,
     tx.value,
     tx.fee,
     tx.data,
+    tx.v,
+    tx.r,
+    tx.s,
   }
 
   return Encode(preEnc)
@@ -90,52 +140,68 @@ func (tx *Transaction) MarshalRlp() []byte {
 func (tx *Transaction) UnmarshalRlp(data []byte) {
   t, _ := Decode(data,0)
   if slice, ok := t.([]interface{}); ok {
-    if lastTx, ok := slice[0].([]byte); ok {
-      tx.lastTx = string(lastTx)
+    if nonce, ok := slice[0].(uint8); ok {
+      tx.nonce = string(nonce)
     }
 
-    if sender, ok := slice[1].([]byte); ok {
-      tx.sender = string(sender)
-    }
-
-    if recipient, ok := slice[2].([]byte); ok {
+    if recipient, ok := slice[1].([]byte); ok {
       tx.recipient = string(recipient)
     }
 
     // If only I knew of a better way.
-    if value, ok := slice[3].(uint8); ok {
+    if value, ok := slice[2].(uint8); ok {
       tx.value = uint64(value)
     }
-    if value, ok := slice[3].(uint16); ok {
+    if value, ok := slice[2].(uint16); ok {
       tx.value = uint64(value)
     }
-    if value, ok := slice[3].(uint32); ok {
+    if value, ok := slice[2].(uint32); ok {
       tx.value = uint64(value)
     }
-    if value, ok := slice[3].(uint64); ok {
+    if value, ok := slice[2].(uint64); ok {
       tx.value = uint64(value)
     }
-    if fee, ok := slice[4].(uint8); ok {
+    if fee, ok := slice[3].(uint8); ok {
       tx.fee = uint32(fee)
     }
-    if fee, ok := slice[4].(uint16); ok {
+    if fee, ok := slice[3].(uint16); ok {
       tx.fee = uint32(fee)
     }
-    if fee, ok := slice[4].(uint32); ok {
+    if fee, ok := slice[3].(uint32); ok {
       tx.fee = uint32(fee)
     }
-    if fee, ok := slice[4].(uint64); ok {
+    if fee, ok := slice[3].(uint64); ok {
       tx.fee = uint32(fee)
     }
 
     // Encode the data/instructions
-    if data, ok := slice[5].([]interface{}); ok {
+    if data, ok := slice[4].([]interface{}); ok {
       tx.data = make([]string, len(data))
       for i, d := range data {
         if instr, ok := d.([]byte); ok {
           tx.data[i] = string(instr)
         }
       }
+    }
+
+    // vrs
+    if v, ok := slice[5].(uint8); ok {
+      tx.v = uint32(v)
+    }
+    if v, ok := slice[5].(uint16); ok {
+      tx.v = uint32(v)
+    }
+    if v, ok := slice[5].(uint32); ok {
+      tx.v = uint32(v)
+    }
+    if v, ok := slice[5].(uint64); ok {
+      tx.v = uint32(v)
+    }
+    if r, ok := slice[6].([]byte); ok {
+      tx.r = r
+    }
+    if s, ok := slice[7].([]byte); ok {
+      tx.s = s
     }
   }
 }
